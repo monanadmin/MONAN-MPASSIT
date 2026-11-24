@@ -72,6 +72,9 @@ set(lib_src
     llxy_module.F90
     misc_definitions_module.F90
     module_map_utils.F90
+    regrid/mpas_mesh_mod.F90
+    regrid/structured_grid_mod.F90
+    regrid/regrid_mod.F90
 )
 
 set(exe_src mpassit.F90)

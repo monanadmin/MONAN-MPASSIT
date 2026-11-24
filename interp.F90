@@ -10,6 +10,11 @@
 
  module interp
 
+ !CR: Interpolation Refactory:
+ use regrid_mod,          only : regridder_t, REGRID_BILINEAR
+ use mpas_mesh_mod,       only : mpas_mesh_t, mpas_mesh_wrap
+ use structured_grid_mod, only : structured_grid_t, structured_grid_wrap
+ 
  use esmf
  use netcdf
  use utils_mod
@@ -240,83 +245,64 @@ subroutine fill_missing_field(localpet,in_field,out_field,nd,nx,ny,method, &
 
  end subroutine fill_missing_field 
 
- subroutine interp_diag_data(localpet)
+  subroutine interp_diag_data(localpet)
 
     implicit none
 
     integer, intent(in)              :: localpet
-    integer                          :: rc
-    integer                          :: isrctermprocessing
-    type(ESMF_RegridMethod_Flag)     :: method
-    
+    integer                          :: i, rc, dimCount
+    type(mpas_mesh_t)                :: src
+    type(structured_grid_t)          :: dst
+    type(regridder_t)                :: rg
+    type(esmf_field), allocatable    :: fields_in(:), fields_out(:)
+    real(esmf_kind_r8), pointer      :: pin1(:), pin2(:,:), pout2(:,:), pout3(:,:,:)
+    character(len=50)                :: fname
+
     call init_target_diag_fields(localpet)
 
-    isrctermprocessing = 1
-    method = ESMF_REGRIDMETHOD_BILINEAR
+    !CR: refatoracao passo 1.1 - interpolacao via regrid_mod
+    call mpas_mesh_wrap(src, input_grid)
+    call structured_grid_wrap(dst, target_grid)
 
-    if (localpet==0) print*,"- CREATE DIAG BUNDLE REGRID ROUTEHANDLE"
+    if (localpet==0) print*,"- CREATE DIAG REGRIDDER (BILINEAR)"
+    call rg%create(src, dst, method=REGRID_BILINEAR, &
+                   missing=real(missing_value, esmf_kind_r8))
 
-    call ESMF_FieldBundleRegridStore(input_diag_bundle, target_diag_bundle, &
-                                     regridmethod=method, &
-                                     routehandle=rh_patch, &
-                                     srcTermProcessing=isrctermprocessing, &
-                                     unmappedaction=ESMF_UNMAPPEDACTION_IGNORE,&
-                                     rc=rc)
+    allocate(fields_in(n_diag_fields), fields_out(n_diag_fields))
+    call ESMF_FieldBundleGet(input_diag_bundle, fieldList=fields_in, &
+                             itemorderflag=ESMF_ITEMORDER_ADDORDER, rc=rc)
+    if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleGet (input_diag_bundle)", rc)
+    call ESMF_FieldBundleGet(target_diag_bundle, fieldList=fields_out, &
+                             itemorderflag=ESMF_ITEMORDER_ADDORDER, rc=rc)
+    if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleGet (target_diag_bundle)", rc)
 
-     if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
-        call error_handler("IN FieldBundleRegridStore", rc)
+    if (localpet==0) print*,"- REGRID DIAG FIELDS"
+    do i = 1, n_diag_fields
+        call ESMF_FieldGet(fields_in(i), dimCount=dimCount, name=fname, rc=rc)
+        if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+            call error_handler("IN FieldGet dimCount", rc)
 
-     if (localpet==0) print*,"- REGRID DIAG FIELDS "
-     call ESMF_FieldBundleRegrid(input_diag_bundle, target_diag_bundle, rh_patch, rc=rc)
-     if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
-        call error_handler("IN FieldBundleRegrid", rc)
-
-   !CR: Preencher missing values campo a campo (bundle misto 2D/3D)
-     call fill_missing_diag(localpet,input_diag_bundle,target_diag_bundle, &
-                             i_target,j_target,method,bilinear_regrid,unmapped_ptr_bi)
-  end subroutine interp_diag_data
-  
-  subroutine fill_missing_diag(localpet,in_bundle,out_bundle,nx,ny, &
-                               method,method_flag,unmapped_ptr)
-
-    implicit none
-
-    integer, intent(in)                          :: localpet, nx, ny
-    type(esmf_fieldbundle), intent(in)           :: in_bundle, out_bundle
-    type(ESMF_RegridMethod_Flag), intent(in)     :: method
-    type(logical), intent(inout)                 :: method_flag
-    integer(esmf_kind_i4), pointer, intent(inout):: unmapped_ptr(:)
-
-    type(esmf_field)                             :: field_in, field_out
-    integer                                      :: num_fields, i, dimCount, rc
-
-    call ESMF_FieldBundleGet(out_bundle, fieldCount=num_fields, rc=rc)
-    if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-        call error_handler("IN FieldBundleGet fill_missing_diag", rc)
-
-    do i = 1, num_fields
-        call ESMF_FieldBundleGet(in_bundle, i, field_in, rc=rc)
-        if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-            call error_handler("IN FieldBundleGet in_bundle", rc)
-        call ESMF_FieldBundleGet(out_bundle, i, field_out, rc=rc)
-        if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-            call error_handler("IN FieldBundleGet out_bundle", rc)
-
-        call ESMF_FieldGet(field_in, dimCount=dimCount, rc=rc)
-        if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
-            call error_handler("IN FieldGet dimCount fill_missing_diag", rc)
-
-        ! dimCount para campo de malha: 1=2D, 2=3D
+        ! dimCount para campo de malha: 1 = 2D, 2 = 3D
         if (dimCount == 1) then
-            call fill_missing_field(localpet,field_in,field_out,2,nx,ny, &
-                                    method,method_flag,unmapped_ptr)
+            call ESMF_FieldGet(fields_in(i),  farrayPtr=pin1,  rc=rc)
+            call ESMF_FieldGet(fields_out(i), farrayPtr=pout2, rc=rc)
+            call rg%apply(pin1, pout2)
         else
-            call fill_missing_field(localpet,field_in,field_out,3,nx,ny, &
-                                    method,method_flag,unmapped_ptr)
+            call ESMF_FieldGet(fields_in(i),  farrayPtr=pin2,  rc=rc)
+            call ESMF_FieldGet(fields_out(i), farrayPtr=pout3, rc=rc)
+            call rg%apply(pin2, pout3)
         endif
+        if (localpet==0) print*, "- REGRID ", trim(fname)
     enddo
 
- end subroutine fill_missing_diag
+    call rg%destroy()
+    deallocate(fields_in, fields_out)
+
+  end subroutine interp_diag_data
+  
+    
 
   subroutine init_target_diag_fields(localpet)
 

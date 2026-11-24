@@ -1,0 +1,56 @@
+  subroutine interp_diag_data(localpet)
+
+    implicit none
+
+    integer, intent(in)              :: localpet
+    integer                          :: i, rc, dimCount
+    type(mpas_mesh_t)                :: src
+    type(structured_grid_t)          :: dst
+    type(regridder_t)                :: rg
+    type(esmf_field), allocatable    :: fields_in(:), fields_out(:)
+    real(esmf_kind_r8), pointer      :: pin1(:), pin2(:,:), pout2(:,:), pout3(:,:,:)
+    character(len=50)                :: fname
+
+    call init_target_diag_fields(localpet)
+
+    !CR: refatoracao passo 1.1 - interpolacao via regrid_mod
+    call mpas_mesh_wrap(src, input_grid)
+    call structured_grid_wrap(dst, target_grid)
+
+    if (localpet==0) print*,"- CREATE DIAG REGRIDDER (BILINEAR)"
+    call rg%create(src, dst, method=REGRID_BILINEAR, &
+                   missing=real(missing_value, esmf_kind_r8))
+
+    allocate(fields_in(n_diag_fields), fields_out(n_diag_fields))
+    call ESMF_FieldBundleGet(input_diag_bundle, fieldList=fields_in, &
+                             itemorderflag=ESMF_ITEMORDER_ADDORDER, rc=rc)
+    if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleGet (input_diag_bundle)", rc)
+    call ESMF_FieldBundleGet(target_diag_bundle, fieldList=fields_out, &
+                             itemorderflag=ESMF_ITEMORDER_ADDORDER, rc=rc)
+    if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleGet (target_diag_bundle)", rc)
+
+    if (localpet==0) print*,"- REGRID DIAG FIELDS"
+    do i = 1, n_diag_fields
+        call ESMF_FieldGet(fields_in(i), dimCount=dimCount, name=fname, rc=rc)
+        if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+            call error_handler("IN FieldGet dimCount", rc)
+
+        ! dimCount para campo de malha: 1 = 2D, 2 = 3D
+        if (dimCount == 1) then
+            call ESMF_FieldGet(fields_in(i),  farrayPtr=pin1,  rc=rc)
+            call ESMF_FieldGet(fields_out(i), farrayPtr=pout2, rc=rc)
+            call rg%apply(pin1, pout2)
+        else
+            call ESMF_FieldGet(fields_in(i),  farrayPtr=pin2,  rc=rc)
+            call ESMF_FieldGet(fields_out(i), farrayPtr=pout3, rc=rc)
+            call rg%apply(pin2, pout3)
+        endif
+        if (localpet==0) print*, "- REGRID ", trim(fname)
+    enddo
+
+    call rg%destroy()
+    deallocate(fields_in, fields_out)
+
+  end subroutine interp_diag_data

@@ -128,7 +128,7 @@
  integer                         :: id_dim
  integer                         :: id_var, i, j, nodes, ndims, d, nv_size, dim_size_tmp
  integer                         :: dimids(NF90_MAX_VAR_DIMS)
- 
+
  type(esmf_field),allocatable    :: fields(:)
 
  real(esmf_kind_r8), allocatable :: dummy(:), dummy3d(:,:,:)
@@ -164,7 +164,7 @@
  allocate(dummy(nCells_input))
 
  do i = 1,n_diag_fields
-    
+
     call ESMF_FieldGet(fields(i), name=vname, rc=rc)
     if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
      call error_handler("IN FieldGet", rc)
@@ -172,7 +172,7 @@
         do_u10_interp = 1
         u10_ind = i
     endif
-    if(vname=='v10') then 
+    if(vname=='v10') then
         do_v10_interp = 1
         v10_ind = i
     endif
@@ -180,11 +180,24 @@
     if (localpet==0) print*,"- READ ", trim(vname)
     error=nf90_inq_varid(ncid, trim(vname), id_var)
     call netcdf_err(error, 'reading field id - '//trim(vname) )
-    
+
     error=nf90_inquire_variable(ncid, id_var, ndims=ndims, dimids=dimids)
     call netcdf_err(error, 'reading variable dims' )
-    
-    if (ndims == 2) then
+
+    !CR: campo estatico (nCells), sem dimensao Time - ex.: ter, landmask
+    !CR: antes nao havia este ramo e o campo seguia para a interpolacao com lixo de memoria
+    if (ndims == 1) then
+      call ESMF_FieldGet(fields(i), farrayPtr=varptr, rc=rc)
+      if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
+         call error_handler("IN FieldGet", rc)
+      error=nf90_get_var(ncid, id_var, dummy, start=(/1/), count=(/nCells_input/))
+      call netcdf_err(error, 'reading static field' )
+      if (localpet==0) print*,"- SET ON MESH (static) ", trim(vname)
+      do j = 1, nCellsPerPET
+          varptr(j) = dummy(elemIDs(j))
+      enddo
+      nullify(varptr)
+    elseif (ndims == 2) then
       call ESMF_FieldGet(fields(i), farrayPtr=varptr, rc=rc)
       if(ESMF_logFoundError(rcToCheck=rc,msg=ESMF_LOGERR_PASSTHRU,line=__LINE__,file=__FILE__)) &
          call error_handler("IN FieldGet", rc)
@@ -219,6 +232,9 @@
       enddo
       nullify(varptr2)
       deallocate(dummy3d)
+    !CR: qualquer outro nº de dimensoes agora aborta com mensagem, em vez de passar calado
+    else
+      call error_handler("VARIAVEL "//trim(vname)//" COM NUMERO DE DIMENSOES NAO SUPORTADO", -1)
     endif
     error=nf90_get_att(ncid,id_var,'units',target_diag_units(i))
     call netcdf_err(error, 'reading field units' )
@@ -292,6 +308,7 @@
     call rotate_winds(localpet,2)
  endif
  end subroutine read_input_diag_data
+
 
  subroutine init_input_diag_fields(localpet)
 

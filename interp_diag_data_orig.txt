@@ -1,0 +1,35 @@
+ subroutine interp_diag_data(localpet)
+
+    implicit none
+
+    integer, intent(in)              :: localpet
+    integer                          :: rc
+    integer                          :: isrctermprocessing
+    type(ESMF_RegridMethod_Flag)     :: method
+    
+    call init_target_diag_fields(localpet)
+
+    isrctermprocessing = 1
+    method = ESMF_REGRIDMETHOD_BILINEAR
+
+    if (localpet==0) print*,"- CREATE DIAG BUNDLE REGRID ROUTEHANDLE"
+
+    call ESMF_FieldBundleRegridStore(input_diag_bundle, target_diag_bundle, &
+                                     regridmethod=method, &
+                                     routehandle=rh_patch, &
+                                     srcTermProcessing=isrctermprocessing, &
+                                     unmappedaction=ESMF_UNMAPPEDACTION_IGNORE,&
+                                     rc=rc)
+
+     if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleRegridStore", rc)
+
+     if (localpet==0) print*,"- REGRID DIAG FIELDS "
+     call ESMF_FieldBundleRegrid(input_diag_bundle, target_diag_bundle, rh_patch, rc=rc)
+     if(ESMF_logFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, line=__LINE__,file=__FILE__)) &
+        call error_handler("IN FieldBundleRegrid", rc)
+
+   !CR: Preencher missing values campo a campo (bundle misto 2D/3D)
+     call fill_missing_diag(localpet,input_diag_bundle,target_diag_bundle, &
+                             i_target,j_target,method,bilinear_regrid,unmapped_ptr_bi)
+  end subroutine interp_diag_data
