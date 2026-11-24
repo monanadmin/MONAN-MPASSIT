@@ -1456,7 +1456,8 @@ contains
         vh = substr(valid_time(1, 1), 12, 13)
         vmi = substr(valid_time(1, 1), 15, 16)
         vs = substr(valid_time(1, 1), 18, 19)
-        xtime_dt = datetime(sy, sm, sd, sh, smi, ss) - datetime(vy, vm, vd, vh, vmi, vs)
+        !CR: XTIME = valido - inicio (antes estava invertido e o tempo saia negativo)
+        xtime_dt = datetime(vy, vm, vd, vh, vmi, vs) - datetime(sy, sm, sd, sh, smi, ss)
 
         error = nf90_put_var(ncid, id_xtime, (/xtime_dt%total_seconds()/60.0/), count=(/1/))
         call netcdf_err(error, 'WRITING XTIME RECORD')
